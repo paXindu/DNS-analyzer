@@ -1,17 +1,17 @@
 from scapy.all import *
 from pymongo import MongoClient
 
-# Define the port to capture DNS traffic on
+
 DNS_PORT = 53
 
-# Define a filter to only capture DNS packets
+
 DNS_FILTER = "udp port {}".format(DNS_PORT)
 
-# Initialize counters for query volume and response time
+
 query_count = 0
 total_response_time = 0
 
-# Initialize counters for error rate and cache hit rate
+
 error_count = 0
 cache_hit_count = 0
 
