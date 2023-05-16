@@ -2,6 +2,7 @@ from scapy.layers.inet import IP
 from scapy.layers.dns import DNS, DNSRR, DNSQR
 from scapy.sendrecv import sniff
 from pymongo import MongoClient
+from datetime import datetime
 
 DNS_PORT = 53
 DNS_FILTER = "udp port {}".format(DNS_PORT)
@@ -24,6 +25,8 @@ def analyze_packet(packet):
 
     if IP in packet:
         src_ip = packet[IP].src
+
+        capture_time = datetime.now()
 
         if DNS in packet:
             query_count += 1
@@ -58,6 +61,7 @@ def analyze_packet(packet):
                 dns_additional_section = str(dns_packet.ar)
 
                 packet_data = {
+                    "capture_time": capture_time,
                     "source_ip": src_ip,
                     "query_count": query_count,
                     "response_time_avg": total_response_time / query_count if query_count > 0 else 0,
@@ -79,26 +83,11 @@ def analyze_packet(packet):
                 dns_collection.insert_one(packet_data)
 
                 print("Query Volume: {}".format(query_count))
-                if query_count > 0:
-                    print("Response Time (avg): {:.2f} seconds".format(total_response_time / query_count))
-                    print("Error Rate: {:.2f}%".format(error_count / query_count * 100))
-                    print("Cache Hit Rate: {:.2f}%".format(cache_hit_count / query_count * 100))
-                    print("DNS Zone Transfer Activity: {}".format(zone_transfer_count))
-                    print("DNS Query Types:", query_types)
-                    print("DNS DNSSEC Validation:", dnssec_validation)
-                    print("DNS DNS Response Size:", dns_response_size)
-                    print("DNS Message Type:", dns_message_type)
-                    print("DNS Response Code:", dns_response_code)
-                    print("DNS Query ID:", dns_query_id)
-                    print("DNS Question Section:", dns_question_section)
-                    print("DNS Answer Section:", dns_answer_section)
-                    print("DNS Authority Section:", dns_authority_section)
-                    print("DNS Additional Section:", dns_additional_section)
 
 
 def main():
     sniff(filter=DNS_FILTER, prn=analyze_packet)
 
+
 if __name__ == "__main__":
     main()
-                   
