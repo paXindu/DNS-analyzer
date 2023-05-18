@@ -1,93 +1,53 @@
-from scapy.layers.inet import IP
-from scapy.layers.dns import DNS, DNSRR, DNSQR
-from scapy.sendrecv import sniff
+from scapy.all import sniff, DNS, IP
 from pymongo import MongoClient
 from datetime import datetime
 
-DNS_PORT = 53
-DNS_FILTER = "udp port {}".format(DNS_PORT)
-
-query_count = 0
-total_response_time = 0
-error_count = 0
-cache_hit_count = 0
-zone_transfer_count = 0
-
-client = MongoClient('localhost', 27017)
+# Connect to MongoDB
+client = MongoClient('mongodb://localhost:27017/')
 db = client['DNSdata']
-dns_collection = db['DNScapture']
+collection = db['DNScapture']
 
+# Callback function to process DNS packets
+def process_dns_packet(packet):
+    if IP in packet and DNS in packet:
+        dns = packet[DNS]
 
-def analyze_packet(packet):
-    global query_count, total_response_time, error_count, cache_hit_count, zone_transfer_count
+        # Capture the basic elements
+        cache_hit = dns.an is not None
+        query_type = dns.qd.qtype
+        response_size = len(dns.an) if dns.an is not None else 0
+        response_code = dns.rcode  # Renamed error_code to response_code
+        query_latency = packet.time - dns.time
+        success = response_code == 0  # Set success based on response_code == 0
+        source_ip = packet[IP].src
+        query_name = dns.qd.qname.decode()  # Decode the DNS query name from bytes to string
 
-    query_types = []
+        # Create a document to store in MongoDB
+        document = {
+            "capture_time": datetime.now(),
+            "cache_hit": cache_hit,
+            "query_type": query_type,
+            "response_size": response_size,
+            "response_code": response_code,
+            "query_latency": query_latency,
+            "success": success,
+            "source_ip": source_ip,
+            "query_name": query_name
+        }
 
-    if IP in packet:
-        src_ip = packet[IP].src
+        # Insert the document into the MongoDB collection
+        collection.insert_one(document)
 
-        capture_time = datetime.now()
+        # Print the captured elements
+        print(f"Cache Hit: {cache_hit}")
+        print(f"Query Type: {query_type}")
+        print(f"Response Size: {response_size}")
+        print(f"Response Code: {response_code}")  # Updated print statement
+        print(f"Query Latency: {query_latency}")
+        print(f"Success: {success}")
+        print(f"Source IP: {source_ip}")
+        print(f"Query Name: {query_name}")
+        print("-----------------------------")
 
-        if DNS in packet:
-            query_count += 1
-
-            if packet.haslayer(DNSRR):
-                response_time = packet.time - packet[DNS].id
-                total_response_time += response_time
-
-                if packet[DNS].rcode != 0:
-                    error_count += 1
-                else:
-                    if packet.an is not None and packet.an.rrname == packet[DNSQR].qname:
-                        cache_hit_count += 1
-
-                    if packet[DNS].qr == 1 and packet[DNS].opcode == 6:  # "IXFR" opcode is represented by 6
-                        zone_transfer_count += 1
-
-                if packet.haslayer(DNSQR):
-                    for qr in packet[DNSQR]:
-                        query_types.append(str(qr))
-
-                dnssec_validation = packet[DNS].ad if DNS in packet else False
-                dns_response_size = len(packet[DNSRR]) if DNSRR in packet else 0
-
-                dns_packet = packet[DNS]
-                dns_message_type = dns_packet.qr
-                dns_response_code = dns_packet.rcode
-                dns_query_id = dns_packet.id
-                dns_question_section = str(dns_packet.qd)
-                dns_answer_section = str(dns_packet.an)
-                dns_authority_section = str(dns_packet.ns)
-                dns_additional_section = str(dns_packet.ar)
-
-                packet_data = {
-                    "capture_time": capture_time,
-                    "source_ip": src_ip,
-                    "query_count": query_count,
-                    "response_time_avg": total_response_time / query_count if query_count > 0 else 0,
-                    "error_rate": error_count / query_count * 100 if query_count > 0 else 0,
-                    "cache_hit_rate": cache_hit_count / query_count * 100 if query_count > 0 else 0,
-                    "zone_transfer_activity": zone_transfer_count,
-                    "dns_query_types": query_types,
-                    "dnssec_validation": dnssec_validation,
-                    "dns_response_size": dns_response_size,
-                    "dns_message_type": dns_message_type,
-                    "dns_response_code": dns_response_code,
-                    "dns_query_id": dns_query_id,
-                    "dns_question_section": dns_question_section,
-                    "dns_answer_section": dns_answer_section,
-                    "dns_authority_section": dns_authority_section,
-                    "dns_additional_section": dns_additional_section
-                }
-
-                dns_collection.insert_one(packet_data)
-
-                print("Query Volume: {}".format(query_count))
-
-
-def main():
-    sniff(filter=DNS_FILTER, prn=analyze_packet)
-
-
-if __name__ == "__main__":
-    main()
+# Sniff DNS packets on the network
+sniff(filter="udp port 53", prn=process_dns_packet)
