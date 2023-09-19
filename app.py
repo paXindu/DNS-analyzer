@@ -1,74 +1,49 @@
-from scapy.all import *
+from scapy.all import sniff, DNS, IP
 from pymongo import MongoClient
-
-# Define the port to capture DNS traffic on
-DNS_PORT = 53
-
-# Define a filter to only capture DNS packets
-DNS_FILTER = "udp port {}".format(DNS_PORT)
-
-# Initialize counters for query volume and response time
-query_count = 0
-total_response_time = 0
-
-# Initialize counters for error rate and cache hit rate
-error_count = 0
-cache_hit_count = 0
+from datetime import datetime
 
 
-zone_transfer_count = 0
-
-
-client = MongoClient('localhost', 27017)
+client = MongoClient('mongodb://localhost:27017/')
 db = client['DNSdata']
-dns_collection = db['DNScapture']
+collection = db['DNScapture']
 
 
-def analyze_packet(packet):
-    global query_count, total_response_time, error_count, cache_hit_count, zone_transfer_count
-
-    if IP in packet:
-
-        src_ip = packet[IP].src
-
-        if DNS in packet:
-
-            query_count += 1
-
-            if packet.haslayer(DNSRR):
-
-                response_time = packet.time - packet[DNS].id
-                total_response_time += response_time
-
-                if packet[DNS].rcode != 0:
-                    error_count += 1
-                else:
-
-                    if packet.an is not None and packet.an.rrname == packet[DNSQR].qname:
-                        cache_hit_count += 1
-
-                    if packet[DNS].qr == 1 and packet[DNS].opcode == "IXFR":
-                        zone_transfer_count += 1
-
-            packet_data = {
-                "source_ip": src_ip,
-                "query_count": query_count,
-                "response_time_avg": total_response_time / query_count if query_count > 0 else 0,
-                "error_rate": error_count / query_count * 100 if query_count > 0 else 0,
-                "cache_hit_rate": cache_hit_count / query_count * 100 if query_count > 0 else 0,
-                "zone_transfer_activity": zone_transfer_count
-            }
-
-            dns_collection.insert_one(packet_data)
-
-    print("Query Volume: {}".format(query_count))
-    if query_count > 0:
-        print("Response Time (avg): {:.2f} seconds".format(
-            total_response_time / query_count))
-        print("Error Rate: {:.2f}%".format(error_count / query_count * 100))
-        print("Cache Hit Rate: {:.2f}%".format(
-            cache_hit_count / query_count * 100))
-        print("DNS Zone Transfer Activity: {}".format(zone_transfer_count))
+collection.create_index("capture_time", expireAfterSeconds=24 * 60 * 60)  
 
 
-sniff(filter=DNS_FILTER, prn=analyze_packet)
+def process_dns_packet(packet):
+    if IP in packet and DNS in packet:
+        dns = packet[DNS]
+
+        
+        cache_hit = dns.an is not None
+        query_type = dns.qd.qtype
+        response_size = len(dns.an) if dns.an is not None else 0
+        response_code = dns.rcode  
+        query_latency = packet.time - dns.time
+        success = response_code == 0  
+        source_ip = packet[IP].src
+        query_name = dns.qd.qname.decode()  
+
+        
+        document = {
+            "capture_time": datetime.now(),
+            "cache_hit": cache_hit,
+            "query_type": query_type,
+            "response_size": response_size,
+            "response_code": response_code,
+            "query_latency": query_latency,
+            "success": success,
+            "source_ip": source_ip,
+            "query_name": query_name
+        }
+
+        
+        collection.insert_one(document)
+
+        
+        
+        print("server runing........")
+
+
+sniff(filter="udp port 53", prn=process_dns_packet)
